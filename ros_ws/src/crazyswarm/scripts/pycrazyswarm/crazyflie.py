@@ -10,7 +10,7 @@ import tf_conversions
 from std_srvs.srv import Empty
 import std_msgs
 from crazyswarm.srv import *
-from crazyswarm.msg import TrajectoryPolynomialPiece, FullState, Position, VelocityWorld
+from crazyswarm.msg import *
 from tf import TransformListener
 from .visualizer import visNull
 
@@ -80,24 +80,15 @@ class Crazyflie:
 
         self.tf = tf
 
-        rospy.wait_for_service(prefix + "/set_group_mask")
-        self.setGroupMaskService = rospy.ServiceProxy(prefix + "/set_group_mask", SetGroupMask)
-        rospy.wait_for_service(prefix + "/takeoff")
-        self.takeoffService = rospy.ServiceProxy(prefix + "/takeoff", Takeoff)
-        rospy.wait_for_service(prefix + "/land")
-        self.landService = rospy.ServiceProxy(prefix + "/land", Land)
-        # rospy.wait_for_service(prefix + "/stop")
-        # self.stopService = rospy.ServiceProxy(prefix + "/stop", Stop)
-        rospy.wait_for_service(prefix + "/go_to")
-        self.goToService = rospy.ServiceProxy(prefix + "/go_to", GoTo)
-        rospy.wait_for_service(prefix + "/upload_trajectory")
-        self.uploadTrajectoryService = rospy.ServiceProxy(prefix + "/upload_trajectory", UploadTrajectory)
-        rospy.wait_for_service(prefix + "/start_trajectory")
-        self.startTrajectoryService = rospy.ServiceProxy(prefix + "/start_trajectory", StartTrajectory)
-        rospy.wait_for_service(prefix + "/notify_setpoints_stop")
-        self.notifySetpointsStopService = rospy.ServiceProxy(prefix + "/notify_setpoints_stop", NotifySetpointsStop)
-        rospy.wait_for_service(prefix + "/update_params")
-        self.updateParamsService = rospy.ServiceProxy(prefix + "/update_params", UpdateParams)
+        self.setGroupMaskPublisher = rospy.Publisher(prefix + "/set_group_mask", SetGroupMask, queue_size=10)
+        self.takeoffPublisher = rospy.Publisher(prefix + "/takeoff", Takeoff, queue_size=10)
+        self.landPublisher = rospy.Publisher(prefix + "/land", Land, queue_size=10)
+        # self.stopPublisher = rospy.Publisher(prefix + "/stop", Stop, queue_size=10)
+        self.goToPublisher = rospy.Publisher(prefix + "/go_to", GoTo, queue_size=10)
+        self.uploadTrajectoryPublisher = rospy.Publisher(prefix + "/upload_trajectory", UploadTrajectory, queue_size=10)
+        self.startTrajectoryPublisher = rospy.Publisher(prefix + "/start_trajectory", StartTrajectory, queue_size=10)
+        self.notifySetpointsStopPublisher = rospy.Publisher(prefix + "/notify_setpoints_stop", NotifySetpointsStop, queue_size=10)
+        self.updateParamsPublisher = rospy.Publisher(prefix + "/update_params", UpdateParams, queue_size=10)
 
         self.cmdFullStatePublisher = rospy.Publisher(prefix + "/cmd_full_state", FullState, queue_size=1)
         self.cmdFullStateMsg = FullState()
@@ -140,7 +131,7 @@ class Crazyflie:
             groupMask (int): An 8-bit integer representing this robot's
                 membership status in each of the <= 8 possible groups.
         """
-        self.setGroupMaskService(groupMask)
+        self.setGroupMaskPublisher.publish(groupMask)
 
     def enableCollisionAvoidance(self, others, ellipsoidRadii):
         """Enables onboard collision avoidance.
@@ -191,7 +182,7 @@ class Crazyflie:
             duration (float): How long until the height is reached. Seconds.
             groupMask (int): Group mask bits. See :meth:`setGroupMask()` doc.
         """
-        self.takeoffService(groupMask, targetHeight, rospy.Duration.from_sec(duration))
+        self.takeoffPublisher.publish(groupMask, targetHeight, rospy.Duration.from_sec(duration))
 
     def land(self, targetHeight, duration, groupMask = 0):
         """Execute a landing - fly straight down. User must cut power after.
@@ -206,7 +197,7 @@ class Crazyflie:
             duration (float): How long until the height is reached. Seconds.
             groupMask (int): Group mask bits. See :meth:`setGroupMask()` doc.
         """
-        self.landService(groupMask, targetHeight, rospy.Duration.from_sec(duration))
+        self.landPublisher.publish(groupMask, targetHeight, rospy.Duration.from_sec(duration))
 
     def stop(self, groupMask = 0):
         """Cuts power to the motors when operating in low-level command mode.
@@ -218,7 +209,7 @@ class Crazyflie:
         Args:
             groupMask (int): Group mask bits. See :meth:`setGroupMask()` doc.
         """
-        self.stopService(groupMask)
+        self.stopPublisher.publish(groupMask)
 
     def goTo(self, goal, yaw, duration, relative = False, groupMask = 0):
         """Move smoothly to the goal, then hover indefinitely.
@@ -252,7 +243,7 @@ class Crazyflie:
             groupMask (int): Group mask bits. See :meth:`setGroupMask()` doc.
         """
         gp = arrayToGeometryPoint(goal)
-        self.goToService(groupMask, relative, gp, yaw, rospy.Duration.from_sec(duration))
+        self.goToPublisher.publish(groupMask, relative, gp, yaw, rospy.Duration.from_sec(duration))
 
     def uploadTrajectory(self, trajectoryId, pieceOffset, trajectory):
         """Uploads a piecewise polynomial trajectory for later execution.
@@ -275,7 +266,7 @@ class Crazyflie:
             piece.poly_z   = poly.pz.p
             piece.poly_yaw = poly.pyaw.p
             pieces.append(piece)
-        self.uploadTrajectoryService(trajectoryId, pieceOffset, pieces)
+        self.uploadTrajectoryPublisher.publish(trajectoryId, pieceOffset, pieces)
 
     def startTrajectory(self, trajectoryId, timescale = 1.0, reverse = False, relative = True, groupMask = 0):
         """Begins executing a previously uploaded trajectory.
@@ -293,7 +284,7 @@ class Crazyflie:
                 This is usually the desired behavior.
             groupMask (int): Group mask bits. See :meth:`setGroupMask()` doc.
         """
-        self.startTrajectoryService(groupMask, trajectoryId, timescale, reverse, relative)
+        self.startTrajectoryPublisher.publish(groupMask, trajectoryId, timescale, reverse, relative)
 
     def notifySetpointsStop(self, remainValidMillisecs=100, groupMask=0):
         """Informs that streaming low-level setpoint packets are about to stop.
@@ -320,7 +311,7 @@ class Crazyflie:
                 onboard-determined behavior. May be longer e.g. if one radio
                 is controlling many robots.
         """
-        self.notifySetpointsStopService(groupMask, remainValidMillisecs)
+        self.notifySetpointsStopPublisher.publish(groupMask, remainValidMillisecs)
 
     def position(self):
         """Returns the last true position measurement from motion capture.
@@ -369,7 +360,7 @@ class Crazyflie:
             value (Any): The parameter's value.
         """
         rospy.set_param(self.prefix + "/" + name, value)
-        self.updateParamsService([name])
+        self.updateParamsPublisher.publish([name])
 
     def setParams(self, params):
         """Changes the value of several parameters at once.
@@ -381,7 +372,7 @@ class Crazyflie:
         """
         for name, value in params.items():
             rospy.set_param(self.prefix + "/" + name, value)
-        self.updateParamsService(params.keys())
+        self.updateParamsPublisher.publish(params.keys())
 
     def cmdFullState(self, pos, vel, acc, yaw, omega):
         """Sends a streaming full-state controller setpoint command.
@@ -569,19 +560,13 @@ class CrazyflieServer:
         """
         rospy.init_node("CrazyflieAPI", anonymous=False)
         rospy.wait_for_service("/emergency")
-        self.emergencyService = rospy.ServiceProxy("/emergency", Empty)
-        rospy.wait_for_service("/takeoff")
-        self.takeoffService = rospy.ServiceProxy("/takeoff", Takeoff)
-        rospy.wait_for_service("/land")
-        self.landService = rospy.ServiceProxy("/land", Land)
-        # rospy.wait_for_service("/stop")
-        # self.stopService = rospy.ServiceProxy("/stop", Stop)
-        rospy.wait_for_service("/go_to")
-        self.goToService = rospy.ServiceProxy("/go_to", GoTo)
-        rospy.wait_for_service("/start_trajectory");
-        self.startTrajectoryService = rospy.ServiceProxy("/start_trajectory", StartTrajectory)
-        rospy.wait_for_service("/update_params")
-        self.updateParamsService = rospy.ServiceProxy("/update_params", UpdateParams)
+        self.emergencyPublisher = rospy.Publisher("/emergency", Empty, queue_size=10)
+        self.takeoffPublisher = rospy.Publisher("/takeoff", Takeoff, queue_size=10)
+        self.landPublisher = rospy.Publisher("/land", Land, queue_size=10)
+        # self.stopPublisher = rospy.Publisher("/stop", Stop, queue_size=10)
+        self.goToPublisher = rospy.Publisher("/go_to", GoTo, queue_size=10)
+        self.startTrajectoryPublisher = rospy.Publisher("/start_trajectory", StartTrajectory, queue_size=10)
+        self.updateParamsPublisher = rospy.Publisher("/update_params", UpdateParams, queue_size=10)
 
         if crazyflies_yaml.endswith(".yaml"):
             with open(crazyflies_yaml, 'r') as ymlfile:
@@ -626,7 +611,7 @@ class CrazyflieServer:
             duration (float): How long until the height is reached. Seconds.
             groupMask (int): Group mask bits. See :meth:`setGroupMask()` doc.
         """
-        self.takeoffService(groupMask, targetHeight, rospy.Duration.from_sec(duration))
+        self.takeoffPublisher.publish(groupMask, targetHeight, rospy.Duration.from_sec(duration))
 
     def land(self, targetHeight, duration, groupMask = 0):
         """Broadcasted landing - fly straight down. User must cut power after.
@@ -643,10 +628,10 @@ class CrazyflieServer:
             duration (float): How long until the height is reached. Seconds.
             groupMask (int): Group mask bits. See :meth:`Crazyflie.setGroupMask()` doc.
         """
-        self.landService(groupMask, targetHeight, rospy.Duration.from_sec(duration))
+        self.landPublisher.publish(groupMask, targetHeight, rospy.Duration.from_sec(duration))
 
     # def stop(self, groupMask = 0):
-    #     self.stopService(groupMask)
+    #     self.stopPublisher.publish(groupMask)
 
     def goTo(self, goal, yaw, duration, groupMask = 0):
         """Broadcasted goTo - Move smoothly to goal, then hover indefinitely.
@@ -669,7 +654,7 @@ class CrazyflieServer:
             groupMask (int): Group mask bits. See :meth:`Crazyflie.setGroupMask()` doc.
         """
         gp = arrayToGeometryPoint(goal)
-        self.goToService(groupMask, True, gp, yaw, rospy.Duration.from_sec(duration))
+        self.goToPublisher.publish(groupMask, True, gp, yaw, rospy.Duration.from_sec(duration))
 
     def startTrajectory(self, trajectoryId, timescale = 1.0, reverse = False, relative = True, groupMask = 0):
         """Broadcasted - begins executing a previously uploaded trajectory.
@@ -687,9 +672,9 @@ class CrazyflieServer:
                 is shifted such that it begins at the current position setpoint.
             groupMask (int): Group mask bits. See :meth:`Crazyflie.setGroupMask()` doc.
         """
-        self.startTrajectoryService(groupMask, trajectoryId, timescale, reverse, relative)
+        self.startTrajectoryPublisher.publish(groupMask, trajectoryId, timescale, reverse, relative)
 
     def setParam(self, name, value):
         """Broadcasted setParam. See Crazyflie.setParam() for details."""
         rospy.set_param("/allcfs/" + name, value)
-        self.updateParamsService([name])
+        self.updateParamsPublisher.publish([name])

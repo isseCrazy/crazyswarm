@@ -436,7 +436,6 @@ public:
 
   void run()
   {
-   
     auto start = std::chrono::system_clock::now();
 
     std::function<void(float)> cb_lq = std::bind(&CrazyflieROS::onLinkQuality, this, std::placeholders::_1);
@@ -1033,11 +1032,8 @@ public:
     readMarkerConfigurations(markerConfigurations);
     readDynamicsConfigurations(dynamicsConfigurations);
     readChannels(channels);    
-    readRosConfiguration(rosConfig);
-    readLogBlocks(rosConfig);
-
-    
- 
+    readRosConfiguration(&rosConfig);
+    readLogBlocks(&rosConfig);
 
     // tilde-expansion
     wordexp_t wordexp_result;
@@ -1051,12 +1047,12 @@ public:
     const bool logClouds = !rosConfig.logFilePath.empty();
 
     std::unique_ptr<libmotioncapture::MotionCapture> mocap;
-    initializeMocap(&mocap, rosConfig);        
+    initializeMocap(&mocap, &rosConfig);        
 
     // Create all Crazyflies in parallel and launch threads
     std::vector<libobjecttracker::Object> objects;
     objects.clear();
-     
+
     int r = 0;
     std::cout << "ch: " << channels.size() << std::endl;
     for (int channel : channels) {
@@ -1080,15 +1076,13 @@ public:
       }
     }
     
-  
+
     // start the crazyflies threads
     for (auto& cf : m_cfs) {
       m_threads.push_back(std::thread(&CrazyflieROS::runner, cf));
     }
 
     ROS_INFO("Started %lu Crazyflie Threads", m_threads.size());
-
-
     // If we use motion capture positions need to get broadcasted
     if (mocap) {
 
@@ -1193,7 +1187,7 @@ public:
         // TODO: Execute runFast like bahaviour:
         // update from pointcloud -> send to tf -> send to crazyflies
 
-        runTracker(rosConfig);
+        runTracker(&rosConfig);
         auto endRunGroups = std::chrono::high_resolution_clock::now();
         /*
         if (rosConfig.printLatency) {
@@ -1350,7 +1344,7 @@ private:
 
   void initializeMocap(
     std::unique_ptr<libmotioncapture::MotionCapture> *mocap,
-    struct rosConfiguration config)
+    rosConfiguration * config)
   {
     ros::NodeHandle nl("~");
       // Make a new client
@@ -1364,14 +1358,14 @@ private:
       cfg["interface_ip"] = interface_ip;
     }
 
-    if (config.motionCaptureType != "none") {
+    if (config->motionCaptureType != "none") {
       ROS_INFO(
         "libmotioncapture connecting to %s at hostname '%s' - "
         "might block indefinitely if unreachable!",
-        config.motionCaptureType.c_str(),
+        config->motionCaptureType.c_str(),
         hostname.c_str()
       );
-      mocap->reset(libmotioncapture::MotionCapture::connect(config.motionCaptureType, cfg));
+      mocap->reset(libmotioncapture::MotionCapture::connect(config->motionCaptureType, cfg));
       if (!(*mocap)) {
         throw std::runtime_error("Unknown motion capture type!");
       }
@@ -1379,23 +1373,23 @@ private:
 
   }
   void runInteractiveObject(std::vector<CrazyflieBroadcaster::externalPose> &states,
-    struct rosConfiguration config)
+    rosConfiguration * config)
   {
-    publishRigidBody(config.interactiveObject, 0xFF, states);
+    publishRigidBody(config->interactiveObject, 0xFF, states);
   }
 
   void runTracker(
-    struct rosConfiguration config
+    rosConfiguration * config
   ) {
     auto stamp = std::chrono::high_resolution_clock::now();
 
     bool broadcastPositions = true;
 
       std::vector<CrazyflieBroadcaster::externalPose> states;
-     if (!config.interactiveObject.empty()) {
+     if (!config->interactiveObject.empty()) {
       runInteractiveObject(states, config);
     }
-      if (config.useMotionCaptureObjectTracking) {
+      if (config->useMotionCaptureObjectTracking) {
         for (auto cf : m_cfs) {
           bool found = publishRigidBody(cf->tf_prefix(), cf->id(), states);
           if (found) {
@@ -1442,7 +1436,7 @@ private:
               *m_outputCSVs[i] << t << "," << states.back().x << "," << states.back().y << "," << states.back().z
                                     << "," << rpy(0) << "," << rpy(1) << "," << rpy(2) << "\n";
             }
-          } else if (!config.disableWarnings) {
+          } else if (!config->disableWarnings) {
             std::chrono::duration<double> elapsedSeconds = stamp - m_tracker->objects()[i].lastValidTime();
             ROS_WARN("No updated pose for CF %s for %f s.",
               m_cfs[i]->tf_prefix().c_str(),
@@ -1454,7 +1448,7 @@ private:
     
     if (broadcastPositions) {
       auto start = std::chrono::high_resolution_clock::now();
-      if (!config.sendPositionOnly) {
+      if (!config->sendPositionOnly) {
         for (auto cfbc : m_cfbcs) {
           cfbc->sendExternalPoses(states);
         }
@@ -1591,39 +1585,39 @@ private:
   }
 
   void readRosConfiguration(
-    struct rosConfiguration config)
+    rosConfiguration * config)
   {
     ros::NodeHandle nl("~");
-    nl.getParam("object_tracking_type", config.objectTrackingType);
-    config.useMotionCaptureObjectTracking = (config.objectTrackingType == "motionCapture");
-    nl.param<std::string>("save_point_clouds", config.logFilePath, "");
-    nl.param<std::string>("interactive_object", config.interactiveObject, "");
-    nl.getParam("print_latency", config.printLatency);
-    nl.getParam("write_csvs", config.writeCSVs);
-    nl.param<std::string>("motion_capture_type", config.motionCaptureType, "vicon");
+    nl.getParam("object_tracking_type", config->objectTrackingType);
+    config->useMotionCaptureObjectTracking = (config->objectTrackingType == "motionCapture");
+    nl.param<std::string>("save_point_clouds", config->logFilePath, "");
+    nl.param<std::string>("interactive_object", config->interactiveObject, "");
+    nl.getParam("print_latency", config->printLatency);
+    nl.getParam("write_csvs", config->writeCSVs);
+    nl.param<std::string>("motion_capture_type", config->motionCaptureType, "vicon");
 
     nl.param<int>("broadcasting_num_repeats", m_broadcastingNumRepeats, 15);
     nl.param<int>("broadcasting_delay_between_repeats_ms", m_broadcastingDelayBetweenRepeatsMs, 1);
-    nl.param<bool>("send_position_only", config.sendPositionOnly, false);
-    nl.param<bool>("disable_warnings", config.disableWarnings, false);
+    nl.param<bool>("send_position_only", config->sendPositionOnly, false);
+    nl.param<bool>("disable_warnings", config->disableWarnings, false);
 
-    nl.param("genericLogTopics", config.genericLogTopics, std::vector<std::string>());
-    nl.param("genericLogTopicFrequencies", config.genericLogTopicFrequencies, std::vector<int>());
+    nl.param("genericLogTopics", config->genericLogTopics, std::vector<std::string>());
+    nl.param("genericLogTopicFrequencies", config->genericLogTopicFrequencies, std::vector<int>());
   }
 
   void readLogBlocks(
-    struct rosConfiguration config) 
+    rosConfiguration * config) 
   {
     ros::NodeHandle nl("~");
     std::vector<crazyswarm::LogBlock> logBlocks;
-    if (config.genericLogTopics.size() == config.genericLogTopicFrequencies.size())
+    if (config->genericLogTopics.size() == config->genericLogTopicFrequencies.size())
     {
       size_t i = 0;
-      for (auto& topic : config.genericLogTopics)
+      for (auto& topic : config->genericLogTopics)
       {
         crazyswarm::LogBlock logBlock;
         logBlock.topic_name = topic;
-        logBlock.frequency = config.genericLogTopicFrequencies[i];
+        logBlock.frequency = config->genericLogTopicFrequencies[i];
         nl.getParam("genericLogTopic_" + topic + "_Variables", logBlock.variables);
         logBlocks.push_back(logBlock);
         ++i;
@@ -1862,7 +1856,9 @@ private:
         }
       }
     }
-    cf->updateParams((crazyswarm::UpdateParams::ConstPtr)&request);
+   
+    crazyswarm::UpdateParams::ConstPtr ptr(new crazyswarm::UpdateParams(request));
+    cf->updateParams( ptr);
   }
 
 
