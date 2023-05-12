@@ -3,4 +3,3 @@ uint8 trajectoryId
 float32 timescale
 bool reversed
 bool relative
----

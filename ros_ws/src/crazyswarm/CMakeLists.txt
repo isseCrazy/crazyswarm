@@ -59,19 +59,20 @@ find_package(PCL REQUIRED)
 ## Generate services in the 'srv' folder
 add_service_files(
   FILES
-  GoTo.srv
-  Land.srv
-  NotifySetpointsStop.srv
-  SetGroupMask.srv
-  StartTrajectory.srv
-  Stop.srv
-  Takeoff.srv
-  UpdateParams.srv
-  UploadTrajectory.srv
+  Crazyflie.srv
 )
 
 add_message_files(
   FILES
+  GoTo.msg
+  Land.msg
+  NotifySetpointsStop.msg
+  SetGroupMask.msg
+  StartTrajectory.msg
+  Stop.msg
+  Takeoff.msg
+  UpdateParams.msg
+  UploadTrajectory.msg
   LogBlock.msg
   GenericLogData.msg
   FullState.msg

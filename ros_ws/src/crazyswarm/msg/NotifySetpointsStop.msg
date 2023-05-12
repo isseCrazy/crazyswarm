@@ -1,3 +1,2 @@
 uint8 groupMask
 uint32 remainValidMillisecs
----

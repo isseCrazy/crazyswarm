@@ -3,4 +3,3 @@ bool relative
 geometry_msgs/Point goal
 float32 yaw # deg
 duration duration
----

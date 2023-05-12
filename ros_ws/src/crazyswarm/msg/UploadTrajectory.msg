@@ -1,4 +1,3 @@
 uint8 trajectoryId
 uint32 pieceOffset
 TrajectoryPolynomialPiece[] pieces
----
