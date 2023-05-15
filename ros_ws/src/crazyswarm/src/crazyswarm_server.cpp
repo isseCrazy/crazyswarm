@@ -145,21 +145,22 @@ public:
         m_pubPose = n.advertise<geometry_msgs::PoseStamped>(m_tf_prefix + "/pose", 10);
       }
     }
-    m_runner = std::thread();
+    m_runner = std::thread(&CrazyflieROS::runner, this);
   }
 
   ~CrazyflieROS()
   {
-    // ToDo: Runner thread canceled by server
-
+    m_endOfLife = true;
+    m_runner.join();
     m_logBlocks.clear();
     m_logBlocksGeneric.clear();
     m_logFile.close();
+    ROS_INFO("[%s] Last Breath", m_tf_prefix.c_str());
   }
 
   void runner() 
   {
-    ROS_INFO_NAMED(m_tf_prefix, "Starting runner thread");    
+    ROS_INFO("[%s] Starting runner thread", m_tf_prefix.c_str());    
 
     ros::NodeHandle nl("~");
     bool enableLogging;
@@ -188,10 +189,19 @@ public:
         }
       }
       
-
-      std::thread callExec = std::thread([=](){m_queue.callOne();return 1;});
-      callExec.detach();     
+      try {
+        // See Ros Documentation, this is not how we should use these Exceptions.
+        m_queue.callOne();
+      } catch (const std::exception & ex) {
+        ROS_WARN("[%s] Exception called, its end of Life.", m_tf_prefix.c_str());
+        m_endOfLife = true;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    
+    /* We could*/
+    for (auto& logBlock : m_logBlocksGeneric) {
+      delete &logBlock;
     }
   }
 
@@ -219,6 +229,9 @@ public:
     return m_type;
   }
 
+  void setEndOfLife() {
+    m_endOfLife = true;
+  }
 
 
 public:
@@ -236,7 +249,7 @@ public:
   void updateParams(
     const crazyswarm::UpdateParams::ConstPtr& req)
   {
-    ROS_INFO_NAMED(m_tf_prefix, "Update parameters");
+    ROS_INFO("[%s] Update parameters", m_tf_prefix.c_str());
     m_cf.startSetParamRequest();
     for (auto&& p : req->params) {
       std::string ros_param = "/" + m_tf_prefix + "/" + p;
@@ -282,7 +295,7 @@ public:
   void uploadTrajectory(
     const crazyswarm::UploadTrajectory::ConstPtr& req)
   {
-    ROS_INFO_NAMED(m_tf_prefix, "Upload trajectory");
+    ROS_INFO("[%s] Upload trajectory", m_tf_prefix.c_str());
 
     std::vector<Crazyflie::poly4d> pieces(req->pieces.size());
     for (size_t i = 0; i < pieces.size(); ++i) {
@@ -303,13 +316,13 @@ public:
     }
     m_cf.uploadTrajectory(req->trajectoryId, req->pieceOffset, pieces);
 
-    ROS_INFO_NAMED(m_tf_prefix, "Uploaded trajectory");
+    ROS_INFO("[%s] Uploaded trajectory", m_tf_prefix.c_str());
   }
 
   void startTrajectory(
     const crazyswarm::StartTrajectory::ConstPtr& req)
   {
-    ROS_INFO_NAMED(m_tf_prefix, "Start trajectory");
+    ROS_INFO("[%s] Start trajectory", m_tf_prefix.c_str());
     m_cf.startTrajectory(req->trajectoryId, req->timescale, req->reversed, 
           req->relative, req->groupMask);
   }
@@ -317,28 +330,28 @@ public:
   void notifySetpointsStop(
     const crazyswarm::NotifySetpointsStop::ConstPtr& req)
   {
-    ROS_INFO_NAMED(m_tf_prefix, "NotifySetpointsStop requested");
+    ROS_INFO("[%s] NotifySetpointsStop requested", m_tf_prefix.c_str());
     m_cf.notifySetpointsStop(req->remainValidMillisecs);
   }
 
   void takeoff(
     const crazyswarm::Takeoff::ConstPtr& req)
   {
-    ROS_INFO_NAMED(m_tf_prefix, "Takeoff");
+    ROS_INFO("[%s] Takeoff", m_tf_prefix.c_str());
     m_cf.takeoff(req->height, req->duration.toSec(), req->groupMask);
   }
 
   void land(
     const crazyswarm::Land::ConstPtr& req)
   {
-    ROS_INFO_NAMED(m_tf_prefix, "Land");
+    ROS_INFO("[%s] Land", m_tf_prefix.c_str());
     m_cf.land(req->height, req->duration.toSec(), req->groupMask);
   }
 
   void goTo(
     const crazyswarm::GoTo::ConstPtr& req)
   {
-    ROS_INFO_NAMED(m_tf_prefix, "GoTo");
+    ROS_INFO("[%s] GoTo", m_tf_prefix.c_str());
     m_cf.goTo(req->goal.x, req->goal.y, req->goal.z, req->yaw,
              req->duration.toSec(), req->relative, req->groupMask);
   }
@@ -346,14 +359,14 @@ public:
   void setGroupMask(
     const crazyswarm::SetGroupMask::ConstPtr& req)
   {
-    ROS_INFO_NAMED(m_tf_prefix, "Set Group Mask");
+    ROS_INFO("[%s] Set Group Mask", m_tf_prefix.c_str());
     m_cf.setGroupMask(req->groupMask);
   }
 
   void cmdVelChanged(
     const geometry_msgs::Twist::ConstPtr& msg)
   {
-    //ROS_INFO_NAMED(m_tf_prefix, "Cmd Vel Changed");
+    //ROS_INFO("[%s] Cmd Vel Changed", m_tf_prefix.c_str());
     float roll = msg->linear.y;
     float pitch = -msg->linear.x;
     float yawrate = msg->angular.z;
@@ -365,7 +378,7 @@ public:
   void cmdPositionSetpoint(
     const crazyswarm::Position::ConstPtr& msg)
   {
-    //ROS_INFO_NAMED(m_tf_prefix, "Cmd Position Setpoint");
+    //ROS_INFO("[%s] Cmd Position Setpoint", m_tf_prefix.c_str());
     float x = msg->x;
     float y = msg->y;
     float z = msg->z;
@@ -376,7 +389,7 @@ public:
   void cmdFullStateSetpoint(
     const crazyswarm::FullState::ConstPtr& msg)
   {
-    //ROS_INFO_NAMED(m_tf_prefix, "Cmd Full State Setpoint");
+    //ROS_INFO("[%s] Cmd Full State Setpoint", m_tf_prefix.c_str());
 
     float x = msg->pose.position.x;
     float y = msg->pose.position.y;
@@ -405,7 +418,7 @@ public:
   }
 
   void cmdHoverSetpoint(const crazyswarm::Hover::ConstPtr& msg){
-    //ROS_INFO_NAMED(m_tf_prefix, "Cmd Hover Setpoint");
+    //ROS_INFO("[%s] Cmd Hover Setpoint", m_tf_prefix.c_str());
     float vx = msg->vx;
     float vy = msg->vy;
     float yawRate = msg->yawrate;
@@ -416,7 +429,7 @@ public:
   void cmdVelocityWorldSetpoint(
     const crazyswarm::VelocityWorld::ConstPtr& msg)
   {
-    //ROS_INFO_NAMED(m_tf_prefix, "Cmd Vel Worl Setpoint");
+    //ROS_INFO("[%s] Cmd Vel Worl Setpoint", m_tf_prefix.c_str());
 
     float x = msg->vel.x;
     float y = msg->vel.y;
@@ -430,7 +443,7 @@ public:
   void cmdStop(
     const std_msgs::Empty::ConstPtr& msg)
   {
-    //ROS_INFO_NAMED(m_tf_prefix, "Cmd Stop");
+    //ROS_INFO("[%s] Cmd Stop", m_tf_prefix.c_str());
     m_cf.sendStop();
   }
 
@@ -446,7 +459,7 @@ public:
     int numParams = 0;
     if (m_enableParameters)
     {
-      ROS_INFO_NAMED(m_tf_prefix, "Requesting parameters...");
+      ROS_INFO("[%s] Requesting parameters...", m_tf_prefix.c_str());
       m_cf.requestParamToc(m_forceNoCache);
       for (auto iter = m_cf.paramsBegin(); iter != m_cf.paramsEnd(); ++iter) {
         auto entry = *iter;
@@ -482,16 +495,16 @@ public:
     }
     auto end1 = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsedSeconds1 = end1-start;
-    ROS_INFO_NAMED(m_tf_prefix, "reqParamTOC: %f s (%d params)", elapsedSeconds1.count(), numParams);
+    ROS_INFO("[%s] reqParamTOC: %f s (%d params)", m_tf_prefix.c_str(), elapsedSeconds1.count(), numParams);
 
     // Logging
     if (m_enableLogging) {
 
-      ROS_INFO_NAMED(m_tf_prefix, "Requesting logging variables...");
+      ROS_INFO("[%s] Requesting logging variables...", m_tf_prefix.c_str());
       m_cf.requestLogToc(m_forceNoCache);
       auto end2 = std::chrono::system_clock::now();
       std::chrono::duration<double> elapsedSeconds2 = end2-end1;
-      ROS_INFO_NAMED(m_tf_prefix, "reqLogTOC: %f s", elapsedSeconds2.count());
+      ROS_INFO("[%s] reqLogTOC: %f s", m_tf_prefix.c_str(), elapsedSeconds2.count());
 
       m_logBlocksGeneric.resize(m_logBlocks.size());
       // custom log blocks
@@ -517,7 +530,7 @@ public:
       
       auto end3 = std::chrono::system_clock::now();
       std::chrono::duration<double> elapsedSeconds3 = end3-end2;
-      ROS_INFO_NAMED(m_tf_prefix, "logBlocks: %f s", elapsedSeconds1.count());
+      ROS_INFO("[%s] logBlocks: %f s", m_tf_prefix.c_str(), elapsedSeconds1.count());
     
 
       if (m_enableLoggingPose) {
@@ -534,12 +547,12 @@ public:
       }
     }
  
-    ROS_INFO_NAMED(m_tf_prefix, "Requesting memories...");
+    ROS_INFO("[%s] Requesting memories...", m_tf_prefix.c_str());
     m_cf.requestMemoryToc();
 
     auto end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsedSeconds = end-start;
-    ROS_INFO_NAMED(m_tf_prefix, "Ready. Elapsed: %f s", elapsedSeconds.count());
+    ROS_INFO("[%s] Ready. Elapsed: %f s", m_tf_prefix.c_str(), elapsedSeconds.count());
 
     
   }
@@ -610,7 +623,7 @@ private:
     size_t pos = m_messageBuffer.find('\n');
     if (pos != std::string::npos) {
       m_messageBuffer[pos] = 0;
-      ROS_INFO_NAMED(m_tf_prefix, "%s", m_messageBuffer.c_str());
+      ROS_INFO("[%s] %s", m_tf_prefix.c_str(), m_messageBuffer.c_str());
       m_messageBuffer.erase(0, pos+1);
     }
   }
@@ -783,15 +796,13 @@ class CrazyflieGroup
 // handles all Crazyflies
 class CrazyflieServer
 {
-public:
+private:
   struct latency
   {
     double objectTracking;
     double broadcasting;
   };
-
-private:
-  struct rosConfiguration 
+  struct rosConfiguration  
   { 
     std::string objectTrackingType;
     bool useMotionCaptureObjectTracking;
@@ -805,17 +816,30 @@ private:
 
     std::vector<std::string> genericLogTopics;
     std::vector<int> genericLogTopicFrequencies;
+  } rosConfig;
+
+  struct CFConfig 
+  {
+    std::string uri;
+    std::string tf_prefix;
+    std::string frame;
+    int idNumber;
+    std::string type;
+  };
+
+  struct latencyEntry {
+        std::string name;
+        double secs;
   };
 
 public:
   CrazyflieServer()
     : m_isEmergency(false)
-    , m_lastInteractiveObjectPosition(-10, -10, 1)
     , m_broadcastingNumRepeats(15)
     , m_broadcastingDelayBetweenRepeatsMs(1)
-    , m_markers(new pcl::PointCloud<pcl::PointXYZ>)
     , m_br()
     , m_phaseStart()
+
   {
     ros::NodeHandle nh;
     nh.setCallbackQueue(&m_queue);
@@ -829,8 +853,7 @@ public:
 
     m_pubPointCloud = nh.advertise<sensor_msgs::PointCloud>("pointCloud", 1);
 
-    m_subscribeVirtualInteractiveObject = nh.subscribe("virtual_interactive_object", 1, &CrazyflieServer::virtualInteractiveObjectCallback, this);
-
+  
     //Vinzenz 
     m_serviceAddCrazyflie = nh.advertiseService("add_crazyflie", &CrazyflieServer::addCrazyflieCallback, this);
     m_serviceRemoveCrazyflie = nh.advertiseService("remove_crazyflie", &CrazyflieServer::removeCrazyflieCallback, this);
@@ -844,6 +867,202 @@ public:
       delete cf;
     }
     delete m_tracker;
+  }
+
+
+public:
+  void run()
+  {
+    std::thread tSlow(&CrazyflieServer::runSlow, this);
+    initialize();
+    runFast();
+    tSlow.join();
+  }
+
+  void runSlow()
+  {
+    while(ros::ok() && !m_isEmergency) {
+      m_queue.callAvailable(ros::WallDuration(0));
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+
+  void initialize() 
+  {
+    std::vector<libobjecttracker::DynamicsConfiguration> dynamicsConfigurations;
+    std::vector<libobjecttracker::MarkerConfiguration> markerConfigurations;
+    std::set<int> channels;
+
+    readMarkerConfigurations(markerConfigurations);
+    readDynamicsConfigurations(dynamicsConfigurations);
+    readChannels(channels);    
+
+    readRosConfiguration(&rosConfig);
+    readLogBlocks(&rosConfig);
+    initializePointCloudLogger(&rosConfig);
+    initializeMocap(&rosConfig);        
+
+    // Read all Crazyflies and create Broadcasters
+    std::vector<libobjecttracker::Object> objects;
+    std::vector<CFConfig> cfConfigs;
+
+    int r = 0;
+    ROS_INFO("Using %d radios", (int)channels.size());
+    for (int channel : channels) {
+      CrazyflieBroadcaster* cfbc = new CrazyflieBroadcaster("radio://" + std::to_string(r) + "/" + std::to_string(channel) + "/2M/FFE7E7E7E7");
+      m_cfbcs.push_back(cfbc);
+      readObjects(objects, cfConfigs, channel, m_logBlocks, r); 
+      ++r;
+    }
+
+    // Initialize Tracker
+    m_tracker = new libobjecttracker::ObjectTracker(
+      dynamicsConfigurations,
+      markerConfigurations,
+      objects);
+    m_tracker->setLogWarningCallback(logWarn);
+
+    //Add Crazyflies
+    for (const auto& config : cfConfigs) {
+      addCrazyflie(config.uri, config.tf_prefix, "/world", config.idNumber, config.type, m_logBlocks);  
+    }
+
+    if (rosConfig.writeCSVs) {
+      m_outputCSVs.resize(m_cfs.size());
+      for (auto& output : m_outputCSVs) {
+        output.reset(new std::ofstream);
+      }
+    }
+
+    ROS_INFO("Started %lu Crazyflie Threads", m_cfs.size());
+  }
+
+  void runFast()
+  {
+    ros::NodeHandle nl("~");
+    // If we use motion capture positions need to get broadcasted
+    if (m_mocap) {
+      auto startTime = std::chrono::high_resolution_clock::now();
+      
+      pcl::PointCloud<pcl::PointXYZ>::Ptr markers(new pcl::PointCloud<pcl::PointXYZ>);
+      std::vector<CrazyflieBroadcaster::externalPose> states;
+
+      std::vector<latencyEntry> latencies;
+      std::vector<double> latencyTotal(6 + 3 * 2, 0.0);
+
+      while (ros::ok() && !m_isEmergency) {
+        m_mocap->waitForNextFrame();
+
+        latencies.clear();
+        auto startIteration = std::chrono::high_resolution_clock::now();
+        double totalLatency = 0;
+        trackMocapLatency(&latencies, &latencyTotal, totalLatency);
+   
+        if (!rosConfig.useMotionCaptureObjectTracking) {
+          // Get pointcloud
+          const auto& pointcloud = m_mocap->pointCloud();
+          markers->clear();
+          for (size_t i = 0; i < pointcloud.rows(); ++i) {
+            const auto &point = pointcloud.row(i);
+            markers->push_back(pcl::PointXYZ(point(0), point(1), point(2)));
+          }
+          publishPointCloud(markers);          
+        } else if (rosConfig.useMotionCaptureObjectTracking) {
+          // Get mocap rigid bodies
+          m_mocapRigidBodies = m_mocap->rigidBodies();
+        }
+
+        states.clear();
+        runTracker(&rosConfig, markers, states);
+        broadcastPositions(states);
+
+        auto endIteration = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = endIteration - startIteration;
+        double elapsedSeconds = elapsed.count();
+        if (elapsedSeconds > 0.09 && !rosConfig.disableWarnings) { // originally 100 Hz (0.009) -> 10Hz enough
+          ROS_WARN("Latency too high! Is %f s.", elapsedSeconds);
+        }
+
+        if (rosConfig.printLatency) printLatencies(&latencies, &latencyTotal, totalLatency);
+      }
+
+      if (m_logClouds) m_pointCloudLogger->flush();
+    }
+
+  
+  }
+
+
+
+  void publishPointCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr markers) 
+  {
+      static sensor_msgs::PointCloud msgPointCloud;
+      msgPointCloud.header.frame_id = "world";
+      msgPointCloud.header.seq += 1;
+      msgPointCloud.header.stamp = ros::Time::now();
+      msgPointCloud.points.resize(markers->size());
+      for (size_t i = 0; i < markers->size(); ++i) {
+        const pcl::PointXYZ& point = markers->at(i);
+        msgPointCloud.points[i].x = point.x;
+        msgPointCloud.points[i].y = point.y;
+        msgPointCloud.points[i].z = point.z;
+      }
+      m_pubPointCloud.publish(msgPointCloud);
+
+      if (m_logClouds) {
+        m_pointCloudLogger->log(markers);
+      }
+  }
+
+  void trackMocapLatency(
+    std::vector<latencyEntry>* latencies,
+    std::vector<double>* latencyTotal, 
+    double totalLatency) 
+  {
+    const auto& mocapLatency = m_mocap->latency();
+    float totalMocapLatency = 0;
+    for (const auto& item : mocapLatency) {
+      totalMocapLatency += item.value();
+    }
+    if (totalMocapLatency > 0.035 && !rosConfig.disableWarnings) {
+      std::stringstream sstr;
+      sstr << "MoCap Latency high: " << totalMocapLatency << " s." << std::endl;
+      for (const auto& item : mocapLatency) {
+        sstr << "  Latency: " << item.name() << ": " << item.value() << " s." << std::endl;
+      }
+      ROS_WARN("%s", sstr.str().c_str());
+    }
+    if (rosConfig.printLatency) {
+          size_t i = 0;
+          for (const auto& item : mocapLatency) {
+            (*latencies).push_back({item.name(), item.value()});
+            (*latencyTotal)[i] += item.value();
+            totalLatency += item.value();
+            (*latencyTotal).back() += item.value();
+          }
+          ++i;
+    }
+  }
+
+  void printLatencies(
+    std::vector<latencyEntry>* latencies,
+    std::vector<double>* latencyTotal, 
+    double totalLatency)
+  {
+    static uint32_t latencyCount;
+    latencyCount++;
+    std::cout << "Latencies" << std::endl;
+    for (auto& latency : *latencies) {
+      std::cout << latency.name << ": " << latency.secs * 1000 << " ms" << std::endl;
+    }
+    std::cout << "Total " << totalLatency * 1000 << " ms" << std::endl;
+    // // if (latencyCount % 100 == 0) {
+      std::cout << "Avg " << latencyCount << std::endl;
+      for (size_t i = 0; i < (*latencyTotal).size(); ++i) {
+        std::cout << (*latencyTotal)[i] / latencyCount * 1000.0 << ",";
+      }
+      std::cout << std::endl;
+    // // }
   }
 
   bool addCrazyflieCallback(
@@ -963,32 +1182,50 @@ public:
     crazyswarm::Crazyflie::Request& req,
     crazyswarm::Crazyflie::Response& res)
   {
-    /*
+    
     ROS_WARN("Got called to remove CF %d", req.id);
-    ros::NodeHandle nGlobal;
     int id = req.id;
     int channel = req.channel;
+    return removeCrazyflie(id);
     
-    removeCfFromParam(id, channel);
-    CrazyflieGroup * group = nullptr;
-    for (auto& _group : m_groups) {
-      if (!channel) { // If no Channel is given take first best
-        for (auto cf : _group->cfs()) {
-          if (cf->id() == id) channel = _group->channel();
-        }
+  }
+  bool removeCrazyflie(
+    int id)
+  {
+    ros::NodeHandle nGlobal;
+    removeCfFromParam(id);
+    std::vector<CrazyflieROS*> cfs;
+    for (auto cf : m_cfs) {
+      if (cf->id() == id) {
+        cf->setEndOfLife();
+        //delete cf; // We would like to do this, but m_cf in CrazyflieROS cannt be deleted without error
+        continue;
       }
-      if (_group->channel() == channel) {
-        ROS_WARN("Removing CF %d from Group", id);
-        _group->removeCrazyflie(id);
-        group = _group;
-        break;
-      }
-    } 
-    if (!group) {
-      logWarn("Couldnt find channel to remove CF");
+      cfs.push_back(cf);
     }
-    */
+    m_cfs.clear();
+    for (auto cf : cfs) {
+      m_cfs.push_back(cf);
+    }
+   
+    std::string name = "cf" + std::to_string(id);
+    m_tracker->removeObject(name);
     return true;
+  }
+
+  void initializePointCloudLogger(
+    rosConfiguration * config) 
+  {
+    // tilde-expansion
+    wordexp_t wordexp_result;
+    if (wordexp(config->logFilePath.c_str(), &wordexp_result, 0) == 0) {
+      // success - only read first result, could be more if globs were used
+      config->logFilePath = wordexp_result.we_wordv[0];
+    }
+    wordfree(&wordexp_result);
+
+    m_pointCloudLogger = new libobjecttracker::PointCloudLogger(config->logFilePath);
+    m_logClouds = !config->logFilePath.empty();
   }
 
   void crazyflieSelfdestructCallback(const std_msgs::Int16::ConstPtr& msg)
@@ -1002,258 +1239,6 @@ public:
     //ros::Duration(0.5).sleep(); // This got called during a Service call, which has to get finished
     // The number is strongly dependent on the timeout defined in Crazyflie.h (Crazyflie.cpp) line 391
     CrazyflieServer::removeCrazyflieCallback(cf.request, cf.response);
-  }
-
-  void virtualInteractiveObjectCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
-  {
-    m_lastInteractiveObjectPosition = Eigen::Vector3f(
-      msg->pose.position.x,
-      msg->pose.position.y,
-      msg->pose.position.z);
-  }
-
-  void run()
-  {
-    std::thread tSlow(&CrazyflieServer::runSlow, this);
-    runFast();
-    tSlow.join();
-  }
-
-  void runFast()
-  {
-    ros::NodeHandle nl("~");
-    
-    std::vector<libobjecttracker::DynamicsConfiguration> dynamicsConfigurations;
-    std::vector<libobjecttracker::MarkerConfiguration> markerConfigurations;
-    std::set<int> channels;
-    rosConfiguration rosConfig;
-
-
-    readMarkerConfigurations(markerConfigurations);
-    readDynamicsConfigurations(dynamicsConfigurations);
-    readChannels(channels);    
-    readRosConfiguration(&rosConfig);
-    readLogBlocks(&rosConfig);
-
-    // tilde-expansion
-    wordexp_t wordexp_result;
-    if (wordexp(rosConfig.logFilePath.c_str(), &wordexp_result, 0) == 0) {
-      // success - only read first result, could be more if globs were used
-      rosConfig.logFilePath = wordexp_result.we_wordv[0];
-    }
-    wordfree(&wordexp_result);
-
-    libobjecttracker::PointCloudLogger pointCloudLogger(rosConfig.logFilePath);
-    const bool logClouds = !rosConfig.logFilePath.empty();
-
-    std::unique_ptr<libmotioncapture::MotionCapture> mocap;
-    initializeMocap(&mocap, &rosConfig);        
-
-    // Create all Crazyflies in parallel and launch threads
-    std::vector<libobjecttracker::Object> objects;
-    objects.clear();
-
-    int r = 0;
-    std::cout << "ch: " << channels.size() << std::endl;
-    for (int channel : channels) {
-      CrazyflieBroadcaster* cfbc = new CrazyflieBroadcaster("radio://" + std::to_string(r) + "/" + std::to_string(channel) + "/2M/FFE7E7E7E7");
-      m_cfbcs.push_back(cfbc);
-
-      readObjects(objects, channel, m_logBlocks, r); // automatically puts cfs in m_cfs
-      // Can crazyflies be generated async??? -> see group generation, this would be faboulous
-      ++r;
-    }
-
-    m_tracker = new libobjecttracker::ObjectTracker(
-      dynamicsConfigurations,
-      markerConfigurations,
-      objects);
-    m_tracker->setLogWarningCallback(logWarn);
-    if (rosConfig.writeCSVs) {
-      m_outputCSVs.resize(m_cfs.size());
-      for (auto& output : m_outputCSVs) {
-        output.reset(new std::ofstream);
-      }
-    }
-    
-
-    // start the crazyflies threads
-    for (auto& cf : m_cfs) {
-      m_threads.push_back(std::thread(&CrazyflieROS::runner, cf));
-    }
-
-    ROS_INFO("Started %lu Crazyflie Threads", m_threads.size());
-    // If we use motion capture positions need to get broadcasted
-    if (mocap) {
-
-      // setup messages
-      sensor_msgs::PointCloud msgPointCloud;
-      msgPointCloud.header.seq = 0;
-      msgPointCloud.header.frame_id = "world";
-
-      auto startTime = std::chrono::high_resolution_clock::now();
-
-      struct latencyEntry {
-        std::string name;
-        double secs;
-      };
-      std::vector<latencyEntry> latencies;
-
-      std::vector<double> latencyTotal(6 + 3 * 2, 0.0);
-      uint32_t latencyCount = 0;
-
-      while (ros::ok() && !m_isEmergency) {
-        // Get a frame
-        mocap->waitForNextFrame();
-
-        latencies.clear();
-
-        auto startIteration = std::chrono::high_resolution_clock::now();
-        double totalLatency = 0;
-
-        // Get the latency
-        const auto& mocapLatency = mocap->latency();
-        float totalMocapLatency = 0;
-        for (const auto& item : mocapLatency) {
-          totalMocapLatency += item.value();
-        }
-        if (totalMocapLatency > 0.035 && !rosConfig.disableWarnings) {
-          std::stringstream sstr;
-          sstr << "MoCap Latency high: " << totalMocapLatency << " s." << std::endl;
-          for (const auto& item : mocapLatency) {
-            sstr << "  Latency: " << item.name() << ": " << item.value() << " s." << std::endl;
-          }
-          ROS_WARN("%s", sstr.str().c_str());
-        }
-
-        if (rosConfig.printLatency) {
-          size_t i = 0;
-          for (const auto& item : mocapLatency) {
-            latencies.push_back({item.name(), item.value()});
-            latencyTotal[i] += item.value();
-            totalLatency += item.value();
-            latencyTotal.back() += item.value();
-          }
-          ++i;
-        }
-
-   
-        if (!rosConfig.useMotionCaptureObjectTracking) {
-          // ToDO: If we switch our datastructure to pointcloud2 (here, for the ROS publisher, and libobjecttracker)
-          //       we can avoid a copy here.
-          const auto& pointcloud = mocap->pointCloud();
-          m_markers->clear();
-          for (size_t i = 0; i < pointcloud.rows(); ++i) {
-            const auto &point = pointcloud.row(i);
-            m_markers->push_back(pcl::PointXYZ(point(0), point(1), point(2)));
-          }
-
-          msgPointCloud.header.seq += 1;
-          msgPointCloud.header.stamp = ros::Time::now();
-          msgPointCloud.points.resize(m_markers->size());
-          for (size_t i = 0; i < m_markers->size(); ++i) {
-            const pcl::PointXYZ& point = m_markers->at(i);
-            msgPointCloud.points[i].x = point.x;
-            msgPointCloud.points[i].y = point.y;
-            msgPointCloud.points[i].z = point.z;
-          }
-          m_pubPointCloud.publish(msgPointCloud);
-
-          if (logClouds) {
-            pointCloudLogger.log(m_markers);
-          }
-        }
-
-        if (rosConfig.useMotionCaptureObjectTracking || !rosConfig.interactiveObject.empty()) {
-          // get mocap rigid bodies
-          m_mocapRigidBodies = mocap->rigidBodies();
-          if (rosConfig.interactiveObject == "virtual") {
-            Eigen::Quaternionf quat(0, 0, 0, 1);
-            m_mocapRigidBodies.emplace(rosConfig.interactiveObject,
-                libmotioncapture::RigidBody(
-                    rosConfig.interactiveObject,
-                    m_lastInteractiveObjectPosition,
-                    quat));
-          }
-        }
-
-        auto startRunGroups = std::chrono::high_resolution_clock::now();
-        /** There is a tradeoff to make:
-         *  if we broadcast positions collision avoidance will work, if we send them out seperately it wont.
-         * But the radio communication is more effective if we dont broadcast. 
-         */
-
-
-        // TODO: Execute runFast like bahaviour:
-        // update from pointcloud -> send to tf -> send to crazyflies
-
-        runTracker(&rosConfig);
-        auto endRunGroups = std::chrono::high_resolution_clock::now();
-        /*
-        if (rosConfig.printLatency) {
-          std::chrono::duration<double> elapsedRunGroups = endRunGroups - startRunGroups;
-          latencies.push_back({"Run All Groups", elapsedRunGroups.count()});
-          latencyTotal[4] += elapsedRunGroups.count();
-          totalLatency += elapsedRunGroups.count();
-          latencyTotal.back() += elapsedRunGroups.count();
-          int groupId = 0;
-          for (auto group : m_groups) {
-            auto latency = group->lastLatency();
-           int radio = group->radio();
-            latencies.push_back({"Group " + std::to_string(radio) + " objectTracking", latency.objectTracking});
-            latencies.push_back({"Group " + std::to_string(radio) + " broadcasting", latency.broadcasting});
-            latencyTotal[5 + 2*groupId] += latency.objectTracking;
-            latencyTotal[6 + 2*groupId] += latency.broadcasting;
-            ++groupId;
-          }
-        }
-        */
-
-        auto endIteration = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> elapsed = endIteration - startIteration;
-        double elapsedSeconds = elapsed.count();
-        if (elapsedSeconds > 0.009 && !rosConfig.disableWarnings) {
-          ROS_WARN("Latency too high! Is %f s.", elapsedSeconds);
-        }
-
-        if (rosConfig.printLatency) {
-          ++latencyCount;
-          std::cout << "Latencies" << std::endl;
-          for (auto& latency : latencies) {
-            std::cout << latency.name << ": " << latency.secs * 1000 << " ms" << std::endl;
-          }
-          std::cout << "Total " << totalLatency * 1000 << " ms" << std::endl;
-          // // if (latencyCount % 100 == 0) {
-            std::cout << "Avg " << latencyCount << std::endl;
-            for (size_t i = 0; i < latencyTotal.size(); ++i) {
-              std::cout << latencyTotal[i] / latencyCount * 1000.0 << ",";
-            }
-            std::cout << std::endl;
-          // // }
-        }
-
-        // ROS_INFO("Latency: %f s", elapsedSeconds.count());
-
-        // m_fastQueue.callAvailable(ros::WallDuration(0));
-      }
-
-      if (logClouds) {
-        pointCloudLogger.flush();
-      }
-    }
-
-    // wait for other threads
-    for (auto& thread : m_threads) {
-      thread.join();
-    }
-  }
-
-  void runSlow()
-  {
-    while(ros::ok() && !m_isEmergency) {
-      m_queue.callAvailable(ros::WallDuration(0));
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
   }
 
 private:
@@ -1343,7 +1328,6 @@ private:
   }
 
   void initializeMocap(
-    std::unique_ptr<libmotioncapture::MotionCapture> *mocap,
     rosConfiguration * config)
   {
     ros::NodeHandle nl("~");
@@ -1365,90 +1349,94 @@ private:
         config->motionCaptureType.c_str(),
         hostname.c_str()
       );
-      mocap->reset(libmotioncapture::MotionCapture::connect(config->motionCaptureType, cfg));
-      if (!(*mocap)) {
+      m_mocap.reset(libmotioncapture::MotionCapture::connect(config->motionCaptureType, cfg));
+      if (!m_mocap) {
         throw std::runtime_error("Unknown motion capture type!");
       }
     }
+  }
 
-  }
-  void runInteractiveObject(std::vector<CrazyflieBroadcaster::externalPose> &states,
-    rosConfiguration * config)
-  {
-    publishRigidBody(config->interactiveObject, 0xFF, states);
-  }
 
   void runTracker(
-    rosConfiguration * config
-  ) {
+    rosConfiguration * config,
+    pcl::PointCloud<pcl::PointXYZ>::Ptr markers,
+    std::vector<CrazyflieBroadcaster::externalPose> &states) 
+  {
     auto stamp = std::chrono::high_resolution_clock::now();
-
-    bool broadcastPositions = true;
-
-      std::vector<CrazyflieBroadcaster::externalPose> states;
-     if (!config->interactiveObject.empty()) {
-      runInteractiveObject(states, config);
-    }
-      if (config->useMotionCaptureObjectTracking) {
+    
+    
+    if (config->useMotionCaptureObjectTracking) {
         for (auto cf : m_cfs) {
           bool found = publishRigidBody(cf->tf_prefix(), cf->id(), states);
           if (found) {
             cf->initializePositionIfNeeded(states.back().x, states.back().y, states.back().z);
           }
         }
-      } else {
-        // run object tracker
-        {
-          auto start = std::chrono::high_resolution_clock::now();
-          m_tracker->update(m_markers); // Here we crash if adding to empty group
-          auto end = std::chrono::high_resolution_clock::now();
-          std::chrono::duration<double> elapsedSeconds = end-start;
-          m_latency.objectTracking = elapsedSeconds.count();
-        }
-        for (size_t i = 0; i < m_cfs.size(); ++i) { //VINZENZ: m_cfs is updated earlier when adding 
-          if (m_tracker->objects()[i].lastTransformationValid()) {
-
-            const Eigen::Affine3f& transform = m_tracker->objects()[i].transformation();
-            Eigen::Quaternionf q(transform.rotation());
-            const auto& translation = transform.translation();
-
-            states.resize(states.size() + 1);
-            states.back().id = m_cfs[i]->id();
-            states.back().x = translation.x();
-            states.back().y = translation.y();
-            states.back().z = translation.z();
-            states.back().qx = q.x();
-            states.back().qy = q.y();
-            states.back().qz = q.z();
-            states.back().qw = q.w();
-
-            m_cfs[i]->initializePositionIfNeeded(states.back().x, states.back().y, states.back().z);
-
-            tf::Transform tftransform;
-            tftransform.setOrigin(tf::Vector3(translation.x(), translation.y(), translation.z()));
-            tftransform.setRotation(tf::Quaternion(q.x(), q.y(), q.z(), q.w()));
-            m_br.sendTransform(tf::StampedTransform(tftransform, ros::Time::now(), "world", m_cfs[i]->tf_prefix()));
-
-            if (m_outputCSVs.size() > 0) {
-              std::chrono::duration<double> tDuration = stamp - m_phaseStart;
-              double t = tDuration.count();
-              auto rpy = q.toRotationMatrix().eulerAngles(0, 1, 2);
-              *m_outputCSVs[i] << t << "," << states.back().x << "," << states.back().y << "," << states.back().z
-                                    << "," << rpy(0) << "," << rpy(1) << "," << rpy(2) << "\n";
-            }
-          } else if (!config->disableWarnings) {
-            std::chrono::duration<double> elapsedSeconds = stamp - m_tracker->objects()[i].lastValidTime();
-            ROS_WARN("No updated pose for CF %s for %f s.",
-              m_cfs[i]->tf_prefix().c_str(),
-              elapsedSeconds.count());
-          }
+    } else {
+      // run object tracker
+      {
+        auto start = std::chrono::high_resolution_clock::now();
+        m_tracker->update(markers); // Here we crash if adding to empty group
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsedSeconds = end-start;
+        m_latency.objectTracking = elapsedSeconds.count();
       }
+      for (size_t i = 0; i < m_cfs.size(); ++i) { 
+        if (m_tracker->objects()[i].lastTransformationValid()) {
 
+          const Eigen::Affine3f& transform = m_tracker->objects()[i].transformation();
+          Eigen::Quaternionf q(transform.rotation());
+          const auto& translation = transform.translation();
+
+          states.resize(states.size() + 1);
+          states.back().id = m_cfs[i]->id();
+          states.back().x = translation.x();
+          states.back().y = translation.y();
+          states.back().z = translation.z();
+          states.back().qx = q.x();
+          states.back().qy = q.y();
+          states.back().qz = q.z();
+          states.back().qw = q.w();
+
+          m_cfs[i]->initializePositionIfNeeded(states.back().x, states.back().y, states.back().z);
+
+          tf::Transform tftransform;
+          tftransform.setOrigin(tf::Vector3(translation.x(), translation.y(), translation.z()));
+          tftransform.setRotation(tf::Quaternion(q.x(), q.y(), q.z(), q.w()));
+          m_br.sendTransform(tf::StampedTransform(tftransform, ros::Time::now(), "world", m_cfs[i]->tf_prefix()));
+
+          if (m_outputCSVs.size() > 0) {
+            std::chrono::duration<double> tDuration = stamp - m_phaseStart;
+            double t = tDuration.count();
+            auto rpy = q.toRotationMatrix().eulerAngles(0, 1, 2);
+            *m_outputCSVs[i] << t << "," << states.back().x << "," << states.back().y << "," << states.back().z
+                                  << "," << rpy(0) << "," << rpy(1) << "," << rpy(2) << "\n";
+          }
+        } else if (!config->disableWarnings) {
+          std::chrono::duration<double> elapsedSeconds = stamp - m_tracker->objects()[i].lastValidTime();
+          ROS_WARN("No updated pose for CF %s for %f s.",
+            m_cfs[i]->tf_prefix().c_str(),
+            elapsedSeconds.count());
+        }
+      }
     }
     
+
+ 
+  }
+
+  void broadcastPositions(
+    std::vector<CrazyflieBroadcaster::externalPose> &states
+  )
+  {
+   /** There is a tradeoff to make:
+      *  if we broadcast positions collision avoidance will work, if we send them out seperately it wont.
+      * But the radio communication is more effective if we dont broadcast. 
+      */
+    bool broadcastPositions = true;
     if (broadcastPositions) {
       auto start = std::chrono::high_resolution_clock::now();
-      if (!config->sendPositionOnly) {
+      if (!rosConfig.sendPositionOnly) {
         for (auto cfbc : m_cfbcs) {
           cfbc->sendExternalPoses(states);
         }
@@ -1465,7 +1453,6 @@ private:
         }
       }
       auto end = std::chrono::high_resolution_clock::now();
-      
       std::chrono::duration<double> elapsedSeconds = end-start;
       m_latency.broadcasting = elapsedSeconds.count();
       // totalLatency += elapsedSeconds.count();
@@ -1473,6 +1460,7 @@ private:
     } else {
       // send through crazyflie
     }
+
   }
 
   bool publishRigidBody(const std::string& name, uint8_t id, std::vector<CrazyflieBroadcaster::externalPose> &states)
@@ -1633,26 +1621,18 @@ private:
 
   void readObjects(
     std::vector<libobjecttracker::Object>& objects,
+    std::vector<CFConfig>& cfConfigs,
     int channel,
     const std::vector<crazyswarm::LogBlock>& logBlocks,
     int radio_id)
   {
-    // read CF config
-    struct CFConfig
-    {
-      std::string uri;
-      std::string tf_prefix;
-      std::string frame;
-      int idNumber;
-      std::string type;
-    };
     ros::NodeHandle nGlobal;
     if (!nGlobal.hasParam("crazyflies")) return;
 
     XmlRpc::XmlRpcValue crazyflies;
     nGlobal.getParam("crazyflies", crazyflies);
     ROS_ASSERT(crazyflies.getType() == XmlRpc::XmlRpcValue::TypeArray);    
-    std::vector<CFConfig> cfConfigs;
+
     for (int32_t i = 0; i < crazyflies.size(); ++i) {
       ROS_ASSERT(crazyflies[i].getType() == XmlRpc::XmlRpcValue::TypeStruct);
       XmlRpc::XmlRpcValue crazyflie = crazyflies[i];
@@ -1687,8 +1667,7 @@ private:
         int dynamicsConfigurationIdx;
         nGlobal.getParam("crazyflieTypes/" + type + "/dynamicsConfiguration", dynamicsConfigurationIdx);
         std::string name = "cf" + std::to_string(id);
-        objects.push_back(libobjecttracker::Object(markerConfigurationIdx, dynamicsConfigurationIdx, m, name));
-
+        
         std::stringstream sstr;
         sstr << std::setfill ('0') << std::setw(2) << std::hex << id;
         std::string idHex = sstr.str();
@@ -1696,21 +1675,12 @@ private:
         std::string uri = "radio://" + std::to_string(radio_id) + "/" + std::to_string(channel) + "/2M/E7E7E7E7" + idHex;
         std::string tf_prefix = "cf" + std::to_string(id);
         std::string frame = "cf" + std::to_string(id);
+
+        objects.push_back(libobjecttracker::Object(markerConfigurationIdx, dynamicsConfigurationIdx, m, name));
         cfConfigs.push_back({uri, tf_prefix, frame, id, type});
       }
     }
-    ROS_INFO("Parsed crazyflies.yaml successfully.");
-
-    // add Crazyflies
-    for (const auto& config : cfConfigs) {
-      addCrazyflie(config.uri, config.tf_prefix, "/world", config.idNumber, config.type, logBlocks);
-
-      auto start = std::chrono::high_resolution_clock::now();
-      updateParams(m_cfs.back());
-      auto end = std::chrono::high_resolution_clock::now();
-      std::chrono::duration<double> elapsed = end - start;
-      ROS_INFO("Update params: %f s", elapsed.count());
-    }
+    ROS_INFO("Parsed crazyflies.yaml successfully!"); 
   }
 
   void addCrazyflie(
@@ -1732,11 +1702,17 @@ private:
       logBlocks);
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end - start;
-    ROS_INFO("CF ctor: %f s", elapsed.count());
+    ROS_INFO("[%s] CF ctor: %f s", tf_prefix.c_str(), elapsed.count());
     cf->run();
     auto end2 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed2 = end2 - end;
-    ROS_INFO("CF run: %f s", elapsed2.count());
+    ROS_INFO("[%s] CF run: %f s", tf_prefix.c_str(), elapsed2.count());
+    start = std::chrono::high_resolution_clock::now();
+    updateParams(cf);
+    auto end3 = std::chrono::high_resolution_clock::now();
+    elapsed = end3 - start;
+    ROS_INFO("[%s] Update params: %f s",tf_prefix.c_str(), elapsed.count());
+
     m_cfs.push_back(cf);
   }
 
@@ -1764,7 +1740,7 @@ private:
   }
 
   // Remove crazyflie from parameter Server
-  bool removeCfFromParam (int id, int channel) {
+  bool removeCfFromParam (int id, int channel = 0) {
     ros::NodeHandle nGlobal;
     if (!nGlobal.hasParam("crazyflies")) return false;
 
@@ -1872,10 +1848,15 @@ private:
   ros::Subscriber m_subscribeLand;
   ros::Subscriber m_subscribeGoTo;
   ros::Subscriber m_subscribeUpdateParams;
-
   ros::Publisher m_pubPointCloud;
+
+  libobjecttracker::PointCloudLogger* m_pointCloudLogger;
+  bool m_logClouds;
+
   // tf::TransformBroadcaster m_br;
+  std::unique_ptr<libmotioncapture::MotionCapture> m_mocap;
   libobjecttracker::ObjectTracker* m_tracker; // non-owning pointer
+  
   std::map<std::string, libmotioncapture::RigidBody>* m_pMocapRigidBodies; // non-owning pointer
   latency m_latency;
 
@@ -1885,12 +1866,9 @@ private:
 
 
   std::vector<CrazyflieROS*> m_cfs;
-  std::vector<std::thread> m_threads;
 
   std::vector<std::unique_ptr<std::ofstream>> m_outputCSVs;
 
-  ros::Subscriber m_subscribeVirtualInteractiveObject;
-  Eigen::Vector3f m_lastInteractiveObjectPosition;
 
   ros::ServiceServer m_serviceAddCrazyflie;
   ros::ServiceServer m_serviceRemoveCrazyflie;
@@ -1900,7 +1878,7 @@ private:
   int m_broadcastingNumRepeats;
   int m_broadcastingDelayBetweenRepeatsMs;
 
-  pcl::PointCloud<pcl::PointXYZ>::Ptr m_markers;
+  
   std::map<std::string, libmotioncapture::RigidBody> m_mocapRigidBodies;
   std::vector<crazyswarm::LogBlock>  m_logBlocks;
   std::chrono::high_resolution_clock::time_point m_phaseStart;
@@ -1915,7 +1893,13 @@ private:
 
   ros::CallbackQueue m_queue;
   // ros::CallbackQueue m_slowQueue;
+
+
 };
+
+
+
+
 
 int main(int argc, char **argv)
 {
