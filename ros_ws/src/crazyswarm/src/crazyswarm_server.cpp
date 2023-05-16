@@ -1069,111 +1069,48 @@ public:
     crazyswarm::Crazyflie::Request& req,
     crazyswarm::Crazyflie::Response& res)
   {
-  /*
+  
     ros::NodeHandle nGlobal;
-    ros::NodeHandle nl("~");
 
-    
     int channel = req.channel;
     int id = req.id;
     std::string type = req.type.data;
     geometry_msgs::Point pos =  req.initialPosition;
     
-    std::vector<double> posVec(3);
-    posVec[0] = pos.x;
-    posVec[1] = pos.y;
-    posVec[2] = pos.z;
-    
-    //Check if we need to create a new channel, or use an existing group
-    CrazyflieGroup * group = nullptr;
-    for (auto& _group : m_groups) {
-      if (_group->channel() == channel) {
-        for (auto cf : _group->cfs()) { // Already in group?
-          if (cf->id() == id) return false;
-        }
-        logWarn("Adding CF to already existing group");
-        if (!_group->addNewCrazyflie(id, posVec, type)) {
-          return false;
-        } 
-        group = _group;
-        break;
-      }
+    int markerConfigurationIdx;
+    nGlobal.getParam("crazyflieTypes/" + type + "/markerConfiguration", markerConfigurationIdx);
+    int dynamicsConfigurationIdx;
+    nGlobal.getParam("crazyflieTypes/" + type + "/dynamicsConfiguration", dynamicsConfigurationIdx);
+  
+    //find radio id
+    int radio_id = -1;
+    for (auto cfbc : m_cfbcs) {
+       if (channel == cfbc->m_channel) {
+          radio_id = cfbc->m_devId;
+          break;
+       }
     } 
+    if (radio_id == -1) {
+      radio_id = (int)m_cfbcs.size();
+    }    
 
-    // No group found -> Add new Group
-    if (!group) {
-      try {
-        logWarn("Adding CF to new group");
+    std::stringstream sstr;
+    sstr << std::setfill ('0') << std::setw(2) << std::hex << id;
+    std::string idHex = sstr.str();
+    std::string uri = "radio://" + std::to_string(radio_id) + "/" + std::to_string(channel) + "/2M/E7E7E7E7" + idHex;
+    std::string tf_prefix = "cf" + std::to_string(id);
 
-        std::vector<libobjecttracker::DynamicsConfiguration> dynamicsConfigurations;
-        std::vector<libobjecttracker::MarkerConfiguration> markerConfigurations;
-        bool writeCSVs;
-        bool sendPositionOnly;
-        bool useMotionCaptureObjectTracking;
-        std::string interactiveObject;
+    
+    Eigen::Affine3f m;
+    m = Eigen::Translation3f(pos.x, pos.y, pos.z);
+    //Check if we need to create a new channel, or use an existing group
+    addCrazyflie(uri, tf_prefix, "/world", id, type, m_logBlocks);    
+    m_tracker->addObject(libobjecttracker::Object(markerConfigurationIdx, dynamicsConfigurationIdx, m, tf_prefix));
+    addCfToParam(id, channel, type, pos);
 
-        readMarkerConfigurations(markerConfigurations);
-        readDynamicsConfigurations(dynamicsConfigurations);
-        nl.getParam("write_csvs", writeCSVs);
-        nl.param<bool>("send_position_only", sendPositionOnly, false);
-        std::string objectTrackingType;
-        nl.getParam("object_tracking_type", objectTrackingType);
-        useMotionCaptureObjectTracking = (objectTrackingType == "motionCapture");
-        nl.param<std::string>("interactive_object", interactiveObject, "");
+    // Updata Param may have to happen afer some stuff (now happens inside addCrazyflie)
+   
 
-        // Create a group and launch thread
-        std::future<CrazyflieGroup *> handle;
-        handle = std::async(std::launch::async,
-              [&](int channel, int radio)
-              {
-                // std::cout << "radio: " << radio << std::endl;
-                return new CrazyflieGroup(
-                  dynamicsConfigurations,
-                  markerConfigurations,
-                  // &client,
-                  m_markers,
-                  &m_mocapRigidBodies,
-                  radio,
-                  channel,
-                  useMotionCaptureObjectTracking,
-                  m_logBlocks,
-                  interactiveObject,
-                  writeCSVs,
-                  sendPositionOnly);
-              },
-              channel,
-              m_groups.size()
-            );
-
-        // Add it to the group list
-        m_groups.push_back(handle.get());
-
-        // start the group thread
-        m_threads.push_back(std::thread(&CrazyflieGroup::runSlow, m_groups.back()));
-      } catch (const std::exception & ex) {
-        logWarn("There was an issue creating a new group! Enough radios connected?");
-        logWarn(ex.what());
-      }
-      try {
-        if (!m_groups.back()->addNewCrazyflie(id, posVec, type)) {
-          ROS_WARN("Group failed to add New Crazyflie!");
-          return false;
-        } 
-      } catch (const std::exception & ex) {
-          logWarn("Group crashed while trying to add New Crazyflie!");
-          logWarn(ex.what());
-          return false;
-      }
-
-    }  
-    try {
-      addCfToParam(id, channel, type, pos);
-      m_groups.back()->updateLatestParam(); // This has to happen afer some stuff
-    } catch (const std::exception & ex) {
-      logWarn("Update Params or add to Param failed!");
-      logWarn(ex.what());
-    }
-    */
     return true;
   }
 
@@ -1832,7 +1769,7 @@ private:
         }
       }
     }
-   
+
     crazyswarm::UpdateParams::ConstPtr ptr(new crazyswarm::UpdateParams(request));
     cf->updateParams( ptr);
   }
