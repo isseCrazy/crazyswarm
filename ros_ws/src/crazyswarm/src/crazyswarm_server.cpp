@@ -720,79 +720,6 @@ private:
   std::thread m_runner;
 };
 
-/*
-// handles a group of Crazyflies, which share a radio
-class CrazyflieGroup
-{
-  void updateLatestParam() {
-    updateParams(m_cfs.back());
-  }
-
-  bool addNewCrazyflie(int id, const std::vector<double> initialPosition,  const std::string& type) 
-  {
-    ros::NodeHandle nGlobal;
-
-    std::stringstream sstr;
-    sstr << std::setfill ('0') << std::setw(2) << std::hex << id;
-    std::string idHex = sstr.str();
-    std::string uri = "radio://" + std::to_string(m_radio) + "/" + std::to_string(m_channel) + "/2M/E7E7E7E7" + idHex;
-    std::string tf_prefix = "cf" + std::to_string(id);
-    std::string frame = "cf" + std::to_string(id);
-      
-    auto start = std::chrono::high_resolution_clock::now();
-    if (type.empty()) {
-      logWarn("No type given, but needed");
-      return false;
-    }  
-
-    try {
-      // Blocks for a timeout second (defined in Crazyflie.h (Crazyflie_cpp), line 391) (fixed in crazyflie_cpp)
-      addCrazyflie(uri, tf_prefix, frame, "/world", id, type, m_logBlocks);
-    } catch ( const std::exception & ex){//}...) {
-      // Crazyflie wasnt found on Radio channel
-      logWarn("Crazyflie couldn't be found!");
-      logWarn(ex.what());
-      auto end = std::chrono::high_resolution_clock::now();
-      std::chrono::duration<double> elapsedSeconds = end-start;
-      ROS_INFO("It took %f s until Failure.", elapsedSeconds.count());
-      return false;
-    }
-
-    Eigen::Affine3f m;
-    m = Eigen::Translation3f(initialPosition[0], initialPosition[1], initialPosition[2]);
-    int markerConfigurationIdx;
-    nGlobal.getParam("crazyflieTypes/" + type + "/markerConfiguration", markerConfigurationIdx);
-    int dynamicsConfigurationIdx;
-    nGlobal.getParam("crazyflieTypes/" + type + "/dynamicsConfiguration", dynamicsConfigurationIdx);
-    std::string name = "cf" + std::to_string(id);
-    logWarn("Params loaded, adding now");
-    m_tracker->addObject(libobjecttracker::Object(markerConfigurationIdx, dynamicsConfigurationIdx, m, name));
-    return true;
-  }
-
-  void removeCrazyflie(int id) {
-    std::vector<CrazyflieROS*> cfs;
-    for (auto cf : m_cfs) {
-      if (cf->id() == id) {
-        delete cf;
-        continue;
-      }
-      cfs.push_back(cf);
-    }
-    m_cfs.clear();
-    for (auto cf : cfs) {
-      m_cfs.push_back(cf);
-    }
-
-    std::string name = "cf" + std::to_string(id);
-    m_tracker->removeObject(name);
-  }
-
-
-
-
-*/
-
 // handles all Crazyflies
 class CrazyflieServer
 {
@@ -1075,6 +1002,10 @@ public:
     int channel = req.channel;
     int id = req.id;
     std::string type = req.type.data;
+     if (type.empty()) {
+      logWarn("No type given, but needed");
+      return false;
+    } 
     geometry_msgs::Point pos =  req.initialPosition;
     
     int markerConfigurationIdx;
@@ -1092,6 +1023,8 @@ public:
     } 
     if (radio_id == -1) {
       radio_id = (int)m_cfbcs.size();
+      CrazyflieBroadcaster* cfbc = new CrazyflieBroadcaster("radio://" + std::to_string(radio_id) + "/" + std::to_string(channel) + "/2M/FFE7E7E7E7");
+      m_cfbcs.push_back(cfbc);
     }    
 
     std::stringstream sstr;
@@ -1103,14 +1036,18 @@ public:
     
     Eigen::Affine3f m;
     m = Eigen::Translation3f(pos.x, pos.y, pos.z);
-    //Check if we need to create a new channel, or use an existing group
-    addCrazyflie(uri, tf_prefix, "/world", id, type, m_logBlocks);    
+    try {
+      // Blocks for a timeout second (defined in Crazyflie.h (Crazyflie_cpp), line 391) (fixed in crazyflie_cpp)
+      // + the time used for updating the params, which can take a while with balanced sending
+      addCrazyflie(uri, tf_prefix, "/world", id, type, m_logBlocks);    
+    } catch ( const std::exception & ex){//}...) {
+      // Crazyflie wasnt found
+      logWarn("Crazyflie couldn't be found!");
+      logWarn(ex.what());
+      return false;
+    }
     m_tracker->addObject(libobjecttracker::Object(markerConfigurationIdx, dynamicsConfigurationIdx, m, tf_prefix));
     addCfToParam(id, channel, type, pos);
-
-    // Updata Param may have to happen afer some stuff (now happens inside addCrazyflie)
-   
-
     return true;
   }
 
