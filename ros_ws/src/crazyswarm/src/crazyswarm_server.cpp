@@ -783,9 +783,9 @@ public:
 
     m_pubPointCloud = nh.advertise<sensor_msgs::PointCloud>("pointCloud", 1);
 
-    m_serviceAddCrazyflie = nh.advertiseService("add_crazyflie", &CrazyflieServer::addCrazyflieCallback, this);
-    m_serviceRemoveCrazyflie = nh.advertiseService("remove_crazyflie", &CrazyflieServer::removeCrazyflieCallback, this);
-    m_subscribeCrazyflieSelfdestruct = nh.subscribe("crazyflie_selfdestruct", 5, &CrazyflieServer::crazyflieSelfdestructCallback, this);
+    m_serviceAddCrazyflie = nh.advertiseService("crazyswarm_server/add_crazyflie", &CrazyflieServer::addCrazyflieCallback, this);
+    m_serviceRemoveCrazyflie = nh.advertiseService("crazyswarm_server/remove_crazyflie", &CrazyflieServer::removeCrazyflieCallback, this);
+    m_subscribeCrazyflieSelfdestruct = nh.subscribe("crazyswarm_server/crazyflie_selfdestruct", 5, &CrazyflieServer::crazyflieSelfdestructCallback, this);
   }
 
   ~CrazyflieServer()
@@ -996,6 +996,12 @@ public:
     ros::NodeHandle nGlobal;
 
     int id = req.id;
+    for (auto& cf : m_cfs) {
+      if (id == cf->id()){
+        ROS_WARN("Crazyflie with this ID already in Swarm");
+        return false;
+      }
+    }
     int channel = req.channel;
     std::string type = req.type.data;
     geometry_msgs::Point pos =  req.initialPosition;
@@ -1073,6 +1079,10 @@ public:
         continue;
       }
       cfs.push_back(cf);
+    }
+    if (cfs.size() == m_cfs.size()) {
+      ROS_WARN("Crazyflie with this ID wasnt in swarm!");
+      return false;
     }
     m_cfs.clear();
     for (auto cf : cfs) {
