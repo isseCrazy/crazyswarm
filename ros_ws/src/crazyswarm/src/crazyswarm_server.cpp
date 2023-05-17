@@ -195,6 +195,9 @@ public:
       } catch (const std::exception & ex) {
         ROS_WARN("[%s] Exception called, its end of Life.", m_tf_prefix.c_str());
         m_endOfLife = true;
+        std_msgs::Int16 msg;
+        msg.data = m_id;        
+        m_advertiseSelfDestruct.publish(msg); // We are calling for Selfdestruct 
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -780,12 +783,9 @@ public:
 
     m_pubPointCloud = nh.advertise<sensor_msgs::PointCloud>("pointCloud", 1);
 
-  
-    //Vinzenz 
     m_serviceAddCrazyflie = nh.advertiseService("add_crazyflie", &CrazyflieServer::addCrazyflieCallback, this);
     m_serviceRemoveCrazyflie = nh.advertiseService("remove_crazyflie", &CrazyflieServer::removeCrazyflieCallback, this);
-
-    m_subscribeCrazyflieSelfdestruct = nh.subscribe("crazyflie_selfdestruct", 1, &CrazyflieServer::crazyflieSelfdestructCallback, this);
+    m_subscribeCrazyflieSelfdestruct = nh.subscribe("crazyflie_selfdestruct", 5, &CrazyflieServer::crazyflieSelfdestructCallback, this);
   }
 
   ~CrazyflieServer()
@@ -867,7 +867,7 @@ public:
   void runFast()
   {
     ros::NodeHandle nl("~");
-    // If we use motion capture positions need to get broadcasted
+    // If we use motion capture positions need to get tracked and broadcasted
     if (m_mocap) {
       auto startTime = std::chrono::high_resolution_clock::now();
       
@@ -914,12 +914,8 @@ public:
       }
 
       if (m_logClouds) m_pointCloudLogger->flush();
-    }
-
-  
+    }  
   }
-
-
 
   void publishPointCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr markers) 
   {
@@ -996,17 +992,17 @@ public:
     crazyswarm::Crazyflie::Request& req,
     crazyswarm::Crazyflie::Response& res)
   {
-  
+    ROS_INFO("Got called to add Crazyflie with ID: %d", req.id);
     ros::NodeHandle nGlobal;
 
-    int channel = req.channel;
     int id = req.id;
+    int channel = req.channel;
     std::string type = req.type.data;
-     if (type.empty()) {
-      logWarn("No type given, but needed");
+    geometry_msgs::Point pos =  req.initialPosition;
+    if (type.empty()) {
+      ROS_WARN("No type given, but needed");
       return false;
     } 
-    geometry_msgs::Point pos =  req.initialPosition;
     
     int markerConfigurationIdx;
     nGlobal.getParam("crazyflieTypes/" + type + "/markerConfiguration", markerConfigurationIdx);
@@ -1021,7 +1017,7 @@ public:
           break;
        }
     } 
-    if (radio_id == -1) {
+    if (radio_id == -1) { // Open new Radio
       radio_id = (int)m_cfbcs.size();
       CrazyflieBroadcaster* cfbc = new CrazyflieBroadcaster("radio://" + std::to_string(radio_id) + "/" + std::to_string(channel) + "/2M/FFE7E7E7E7");
       m_cfbcs.push_back(cfbc);
@@ -1032,7 +1028,6 @@ public:
     std::string idHex = sstr.str();
     std::string uri = "radio://" + std::to_string(radio_id) + "/" + std::to_string(channel) + "/2M/E7E7E7E7" + idHex;
     std::string tf_prefix = "cf" + std::to_string(id);
-
     
     Eigen::Affine3f m;
     m = Eigen::Translation3f(pos.x, pos.y, pos.z);
@@ -1040,10 +1035,8 @@ public:
       // Blocks for a timeout second (defined in Crazyflie.h (Crazyflie_cpp), line 391) (fixed in crazyflie_cpp)
       // + the time used for updating the params, which can take a while with balanced sending
       addCrazyflie(uri, tf_prefix, "/world", id, type, m_logBlocks);    
-    } catch ( const std::exception & ex){//}...) {
-      // Crazyflie wasnt found
-      logWarn("Crazyflie couldn't be found!");
-      logWarn(ex.what());
+    } catch ( const std::exception & ex){
+      ROS_INFO("Crazyflie couldn't be found! %s", ex.what());
       return false;
     }
     m_tracker->addObject(libobjecttracker::Object(markerConfigurationIdx, dynamicsConfigurationIdx, m, tf_prefix));
@@ -1057,16 +1050,20 @@ public:
     crazyswarm::Crazyflie::Response& res)
   {
     
-    ROS_WARN("Got called to remove CF %d", req.id);
-    int id = req.id;
-    int channel = req.channel;
-    return removeCrazyflie(id);
-    
+    ROS_INFO("Got called to remove CF %d", req.id);
+    return removeCrazyflie(req.id);    
   }
+
+  void crazyflieSelfdestructCallback(
+    const std_msgs::Int16::ConstPtr& msg)
+  {
+    ROS_INFO("CF %d called for selfdestruct", msg->data);
+    removeCrazyflie(msg->data);
+  }
+
   bool removeCrazyflie(
     int id)
   {
-    ros::NodeHandle nGlobal;
     removeCfFromParam(id);
     std::vector<CrazyflieROS*> cfs;
     for (auto cf : m_cfs) {
@@ -1090,7 +1087,6 @@ public:
   void initializePointCloudLogger(
     rosConfiguration * config) 
   {
-    // tilde-expansion
     wordexp_t wordexp_result;
     if (wordexp(config->logFilePath.c_str(), &wordexp_result, 0) == 0) {
       // success - only read first result, could be more if globs were used
@@ -1100,19 +1096,6 @@ public:
 
     m_pointCloudLogger = new libobjecttracker::PointCloudLogger(config->logFilePath);
     m_logClouds = !config->logFilePath.empty();
-  }
-
-  void crazyflieSelfdestructCallback(const std_msgs::Int16::ConstPtr& msg)
-  {
-    int id = msg->data;
-    crazyswarm::Crazyflie cf;
-    cf.request.id  = id;
-    cf.request.channel = 0;
-    ROS_WARN("CF %d called for selfdestruct, calling Service!", id);
-    //std::this_thread::sleep_for(std::chrono::milliseconds(200)); // sleep for 200ms / double the time for timeout 
-    //ros::Duration(0.5).sleep(); // This got called during a Service call, which has to get finished
-    // The number is strongly dependent on the timeout defined in Crazyflie.h (Crazyflie.cpp) line 391
-    CrazyflieServer::removeCrazyflieCallback(cf.request, cf.response);
   }
 
 private:
@@ -1230,7 +1213,6 @@ private:
     }
   }
 
-
   void runTracker(
     rosConfiguration * config,
     pcl::PointCloud<pcl::PointXYZ>::Ptr markers,
@@ -1294,17 +1276,15 @@ private:
         }
       }
     }
-    
-
- 
   }
 
   void broadcastPositions(
     std::vector<CrazyflieBroadcaster::externalPose> &states
   )
   {
-   /** There is a tradeoff to make:
-      *  if we broadcast positions collision avoidance will work, if we send them out seperately it wont.
+    /** We can either broadcast them, or send them to each individual.
+      * But there is a tradeoff to make:
+      * If we broadcast positions collision avoidance will work, if we send them out seperately it wont.
       * But the radio communication is more effective if we dont broadcast. 
       */
     bool broadcastPositions = true;
@@ -1334,7 +1314,6 @@ private:
     } else {
       // send through crazyflie
     }
-
   }
 
   bool publishRigidBody(const std::string& name, uint8_t id, std::vector<CrazyflieBroadcaster::externalPose> &states)
@@ -1374,7 +1353,7 @@ private:
   }
 
 
-  // Reads all available marker configurations, adds them to parameter server
+  // Reads all available marker configurations
   void readMarkerConfigurations(
     std::vector<libobjecttracker::MarkerConfiguration>& markerConfigurations)
   {
@@ -1403,7 +1382,7 @@ private:
     }
   }
 
-  // Reads all available dynamic configurations, adds them to parameter server
+  // Reads all available dynamic configurations
   void readDynamicsConfigurations(
     std::vector<libobjecttracker::DynamicsConfiguration>& dynamicsConfigurations)
   {
@@ -1429,10 +1408,9 @@ private:
   void readChannels(
     std::set<int>& channels)
   {
-    // read CF config
     ros::NodeHandle nGlobal;
+    if (!nGlobal.hasParam("crazyflies")) return; // No initial configuration
 
-    if (!nGlobal.hasParam("crazyflies")) return;
     XmlRpc::XmlRpcValue crazyflies;
     nGlobal.getParam("crazyflies", crazyflies);
     ROS_ASSERT(crazyflies.getType() == XmlRpc::XmlRpcValue::TypeArray);
@@ -1501,7 +1479,7 @@ private:
     int radio_id)
   {
     ros::NodeHandle nGlobal;
-    if (!nGlobal.hasParam("crazyflies")) return;
+    if (!nGlobal.hasParam("crazyflies")) return; // No initial Crazyflie Parameter
 
     XmlRpc::XmlRpcValue crazyflies;
     nGlobal.getParam("crazyflies", crazyflies);
@@ -1711,8 +1689,6 @@ private:
     cf->updateParams( ptr);
   }
 
-
-
 private:
   std::string m_worldFrame;
   bool m_isEmergency;
@@ -1724,76 +1700,54 @@ private:
   ros::Subscriber m_subscribeUpdateParams;
   ros::Publisher m_pubPointCloud;
 
-  libobjecttracker::PointCloudLogger* m_pointCloudLogger;
-  bool m_logClouds;
+  ros::ServiceServer m_serviceAddCrazyflie;
+  ros::ServiceServer m_serviceRemoveCrazyflie;
+  ros::Subscriber m_subscribeCrazyflieSelfdestruct;
 
-  // tf::TransformBroadcaster m_br;
+  tf::TransformBroadcaster m_br;
   std::unique_ptr<libmotioncapture::MotionCapture> m_mocap;
   libobjecttracker::ObjectTracker* m_tracker; // non-owning pointer
   
   std::map<std::string, libmotioncapture::RigidBody>* m_pMocapRigidBodies; // non-owning pointer
   latency m_latency;
 
-  tf::TransformBroadcaster m_br;
-
-  std::vector<CrazyflieBroadcaster*> m_cfbcs;
-
-
   std::vector<CrazyflieROS*> m_cfs;
-
-  std::vector<std::unique_ptr<std::ofstream>> m_outputCSVs;
-
-
-  ros::ServiceServer m_serviceAddCrazyflie;
-  ros::ServiceServer m_serviceRemoveCrazyflie;
-
-  ros::Subscriber m_subscribeCrazyflieSelfdestruct;
+  std::vector<CrazyflieBroadcaster*> m_cfbcs;
 
   int m_broadcastingNumRepeats;
   int m_broadcastingDelayBetweenRepeatsMs;
 
+  std::vector<std::unique_ptr<std::ofstream>> m_outputCSVs;
+
+  libobjecttracker::PointCloudLogger* m_pointCloudLogger;
+  bool m_logClouds;
   
   std::map<std::string, libmotioncapture::RigidBody> m_mocapRigidBodies;
   std::vector<crazyswarm::LogBlock>  m_logBlocks;
   std::chrono::high_resolution_clock::time_point m_phaseStart;
 
-
 private:
-  // We have two callback queues
-  // 1. Fast queue handles pose and emergency callbacks. Those are high-priority and can be served quickly
-  // 2. Slow queue handles all other requests.
-  // Each queue is handled in its own thread. We don't want a thread per CF to make sure that the fast queue
-  //  gets called frequently enough.
-
+  /**
+   * Callback Queue handles all Rosservicecalls, as well as Rostopic Callbacks
+   * 
+   * Can be split into two 'groups':
+   *    1. AddCf, RemoceCf, SelfdestructCf
+   *    2. Commandtopics (land, takeoff, emergency)
+   * 
+   * It might be wise in the future to split those, because adding can take some time.
+   * As the Commandtopics are not timecritical, this might hovever be fine.
+   * 
+  */
   ros::CallbackQueue m_queue;
-  // ros::CallbackQueue m_slowQueue;
-
-
 };
-
-
-
-
 
 int main(int argc, char **argv)
 {
-  // raise(SIGSTOP);
-
   ros::init(argc, argv, "crazyflie_server");
-
-  // ros::NodeHandle n("~");
-  // std::string worldFrame;
-  // n.param<std::string>("world_frame", worldFrame, "/world");
-  // std::string broadcastUri;
-  // n.getParam("broadcast_uri", broadcastUri);
-
-  CrazyflieServer server;//(broadcastUri, worldFrame);
-
-  // read CF config
   ros::NodeHandle nGlobal;
 
+  // Precheck yaml for doubled id's in configuration
   if (nGlobal.hasParam("crazyflies")) {
-
     XmlRpc::XmlRpcValue crazyflies;
     nGlobal.getParam("crazyflies", crazyflies);
     ROS_ASSERT(crazyflies.getType() == XmlRpc::XmlRpcValue::TypeArray);
@@ -1811,10 +1765,9 @@ int main(int argc, char **argv)
       }
       cfIds.insert(id);
     } 
-
-    // ROS_INFO("All CFs are ready!");
   }
   
+  CrazyflieServer server;
   server.run();
 
   return 0;
